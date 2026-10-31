@@ -55,7 +55,7 @@ async fn resolve(host: &str, port: u16, dns: Option<&str>) -> Result<SocketAddr,
         let ns: IpAddr = d
             .trim_matches(|c| c == '[' || c == ']')
             .parse()
-            .map_err(|_| format!("DNS-сервер «{}» не похож на IP-адрес", d))?;
+            .map_err(|_| format!("E_DNS_ADDR|{}", d))?;
         let cfg = ResolverConfig::from_parts(
             None,
             vec![],
@@ -65,19 +65,19 @@ async fn resolve(host: &str, port: u16, dns: Option<&str>) -> Result<SocketAddr,
         let ips = resolver
             .lookup_ip(h)
             .await
-            .map_err(|e| format!("DNS {} не нашёл «{}»: {}", ns, h, e))?;
+            .map_err(|e| format!("E_DNS|{}|{}|{}", ns, h, e))?;
         let ip = ips
             .iter()
             .next()
-            .ok_or_else(|| format!("DNS {} не вернул адрес для «{}»", ns, h))?;
+            .ok_or_else(|| format!("E_DNS|{}|{}|", ns, h))?;
         return Ok(SocketAddr::new(ip, port));
     }
     let mut found = tokio::net::lookup_host((h, port))
         .await
-        .map_err(|e| format!("Не удалось найти адрес «{}»: {}", h, e))?;
+        .map_err(|e| format!("E_RESOLVE|{}|{}", h, e))?;
     found
         .next()
-        .ok_or_else(|| format!("Для «{}» не найдено ни одного адреса", h))
+        .ok_or_else(|| format!("E_RESOLVE|{}|", h))
 }
 
 #[tauri::command]
@@ -107,7 +107,7 @@ async fn connect(
         client::connect(config, addr, handler),
     )
     .await
-    .map_err(|_| "Время ожидания подключения истекло (10 с)".to_string())?;
+    .map_err(|_| "E_CONNECT_TIMEOUT".to_string())?;
     let mut handle = match connected {
         Ok(h) => h,
         Err(e) => {
@@ -116,14 +116,15 @@ async fn connect(
                 let kind = if known_fp.is_some() { "CHANGED" } else { "NEW" };
                 return Err(format!("KEY:{}:{}", kind, seen));
             }
-            return Err(format!("Не удалось подключиться: {}", e));
+            return Err(format!("E_CONNECT|{}", e));
         }
     };
 
     let ok = match key_path.as_deref().filter(|p| !p.trim().is_empty()) {
         Some(path) => {
             let pass = if password.is_empty() { None } else { Some(password.as_str()) };
-            let key = russh_keys::load_secret_key(path, pass).map_err(err)?;
+            let key = russh_keys::load_secret_key(path, pass)
+                .map_err(|e| format!("E_KEY|{}", e))?;
             handle
                 .authenticate_publickey(&user, Arc::new(key))
                 .await
@@ -135,7 +136,7 @@ async fn connect(
             .map_err(err)?,
     };
     if !ok {
-        return Err("Неверный логин, пароль или ключ".into());
+        return Err("E_AUTH".into());
     }
 
     let fingerprint = fp.lock().unwrap().clone();
@@ -154,7 +155,7 @@ async fn disconnect(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 async fn run_command(state: State<'_, AppState>, command: String) -> Result<RunOut, String> {
     let mut guard = state.session.lock().await;
-    let handle = guard.as_mut().ok_or("Нет подключения")?;
+    let handle = guard.as_mut().ok_or("E_NO_SESSION")?;
 
     let work = async {
         let mut ch = handle.channel_open_session().await.map_err(err)?;
@@ -177,7 +178,7 @@ async fn run_command(state: State<'_, AppState>, command: String) -> Result<RunO
 
     tokio::time::timeout(Duration::from_secs(120), work)
         .await
-        .map_err(|_| "Команда выполняется дольше 120 секунд".to_string())?
+        .map_err(|_| "E_CMD_TIMEOUT".to_string())?
 }
 
 #[tauri::command]
@@ -192,5 +193,5 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![connect, disconnect, run_command, parse_yaml])
         .run(tauri::generate_context!())
-        .expect("ошибка запуска приложения");
+        .expect("failed to start the application");
 }

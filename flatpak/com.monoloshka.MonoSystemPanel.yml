@@ -1,0 +1,28 @@
+app-id: com.monoloshka.MonoSystemPanel
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+command: monosystempanel
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+modules:
+  - name: monosystempanel
+    buildsystem: simple
+    build-commands:
+      - ar x msp.deb
+      - tar xf data.tar.*
+      - install -Dm755 "$(find usr/bin -type f | head -1)" /app/bin/monosystempanel
+      - install -Dm644 "$(find usr/share/applications -name '*.desktop' | head -1)" /app/share/applications/com.monoloshka.MonoSystemPanel.desktop
+      - sed -i 's/^Icon=.*/Icon=com.monoloshka.MonoSystemPanel/; s/^Exec=.*/Exec=monosystempanel/' /app/share/applications/com.monoloshka.MonoSystemPanel.desktop
+      - |
+        for f in $(find usr/share/icons -name '*.png'); do
+          d=$(dirname "${f#usr/}")
+          install -Dm644 "$f" "/app/$d/com.monoloshka.MonoSystemPanel.png"
+        done
+    sources:
+      - type: file
+        path: msp.deb

@@ -2,10 +2,79 @@ app:
   name: Роутер OpenWrt
 
 pages:
-  # Список служб строится сам из /etc/init.d: добавлять вручную ничего не нужно
   - title: Службы
     items:
-      - services: openwrt
+      # Таблица строится из вывода команды: сколько строк, столько и служб. Ничего добавлять вручную не нужно.
+      - list: Службы
+        hint: CPU и RAM показаны для служб под управлением procd (в процентах от всей системы). Для остановленных служб эти поля пустые.
+        run: ls /etc/init.d
+        search: true
+        filter: { label: Только запущенные, var: state, is: running }
+        columns:
+          - title: Автозапуск
+            var: boot
+            run: |
+              for n in {names}; do
+                if /etc/init.d/$n enabled >/dev/null 2>&1; then echo "$n enabled"; else echo "$n disabled"; fi
+              done
+            values: { enabled: "✓ вкл", disabled: "— выкл" }
+          - title: Состояние
+            var: state
+            run: |
+              for n in {names}; do
+                if /etc/init.d/$n running >/dev/null 2>&1; then echo "$n running"; else echo "$n stopped"; fi
+              done
+            values: { running: "● работает", stopped: "○ остановлена" }
+          - title: PID
+            var: pid
+            requires: [ubus, jsonfilter]
+            run: |
+              j=$(ubus call service list 2>/dev/null)
+              for n in {names}; do
+                echo "$n $(jsonfilter -s "$j" -e "@['$n'].instances[*].pid" 2>/dev/null | tr '\n' ' ')"
+              done
+          - titles: [CPU %, RAM %]
+            vars: [cpu, mem]
+            requires: [ubus, jsonfilter]
+            run: |
+              j=$(ubus call service list 2>/dev/null)
+              mt=$(awk '/^MemTotal/{print $2}' /proc/meminfo)
+              t=/tmp/.msp.$$
+              for n in {names}; do
+                for p in $(jsonfilter -s "$j" -e "@['$n'].instances[*].pid" 2>/dev/null); do echo "$n $p"; done
+              done > $t
+              snap() { while read n p; do [ -r /proc/$p/stat ] && echo "$n $(sed 's/.*) //' /proc/$p/stat | awk '{print $12+$13}') $(awk '/VmRSS/{print $2}' /proc/$p/status)"; done < $t; }
+              ct() { awk '/^cpu /{s=0;for(i=2;i<=NF;i++)s+=$i;print s}' /proc/stat; }
+              a=$(snap); c1=$(ct); sleep 1; b=$(snap); c2=$(ct)
+              rm -f $t
+              ( echo "$a" | sed 's/^/A /'; echo "$b" | sed 's/^/B /' ) | awk -v dt=$((c2-c1)) -v mt=$mt '$1=="A"{ca[$2]+=$3} $1=="B"{cb[$2]+=$3; mem[$2]+=$4; seen[$2]=1} END{for(n in seen) if(dt>0) printf "%s %.1f %.1f\n", n, (cb[n]-ca[n])/dt*100, mem[n]/mt*100}'
+        actions:
+          - label: Старт
+            run: /etc/init.d/{name} start
+            enabled_if: { var: state, is: stopped }
+          - label: Перезапуск
+            run: /etc/init.d/{name} restart
+            confirm_for: [dropbear, network]
+          - label: Перечитать настройки
+            hint: Служба заново прочитает настройки, не останавливаясь
+            run: /etc/init.d/{name} reload
+            enabled_if: { var: state, is: running }
+          - label: Остановить
+            run: /etc/init.d/{name} stop
+            enabled_if: { var: state, is: running }
+            confirm_for: [dropbear, network]
+          - label: Завершить принудительно
+            hint: Используйте, только если служба не отвечает на «Остановить» (kill -9)
+            run: kill -9 {pid}
+            enabled_if: { var: pid, empty: false }
+            confirm: "Принудительно завершить «{name}» (PID {pid})?"
+          - label: Включить автозапуск
+            run: /etc/init.d/{name} enable
+            show_if: { var: boot, is: disabled }
+          - label: Отключить автозапуск
+            run: /etc/init.d/{name} disable
+            show_if: { var: boot, is: enabled }
+            confirm_for: [dropbear, network]
 
   - title: Пинг
     items:
@@ -35,14 +104,13 @@ pages:
 
   - title: Питание
     items:
-      # Цепочка с запасным вариантом: на разных системах команда может отличаться
+      # Запасной вариант: на роутере сработает dropbear, на обычном Linux — ssh
       - button: Перезапустить SSH-сервер
         confirm: true
         run:
-          - cmd: systemctl restart ssh
-            fail_if: "not found"
+          - cmd: service dropbear restart
             fallback:
-              - /etc/init.d/dropbear restart
+              - service ssh restart
       - button: Перезагрузить устройство
         reboot: true          # после команды программа сама дождётся устройства и переподключится
         run: reboot

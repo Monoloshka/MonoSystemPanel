@@ -2,5 +2,5 @@
 // Картинки лежат в папке ads/ и подгружаются с диска, а не из интернета.
 // Добавить баннер: положить файл в ads/ и дописать строку сюда. Убрать: удалить строку.
 const ADS = [
-  { img: 'ads/sample.svg', url: 'https://github.com/Monoloshka/ssh-constructor', alt: 'Здесь может быть ваша реклама' },
+  { img: 'ads/sample.svg', url: 'https://github.com/Monoloshka/MonoSystemPanel', alt: 'Здесь может быть ваша реклама' },
 ];
